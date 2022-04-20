@@ -323,6 +323,119 @@ class Resize:
 
 
 @PIPELINES.register_module()
+class RandomReplace:
+    def __init__(self, replace_ratio=None, direction='horizontal'):
+        if isinstance(replace_ratio, list):
+            assert mmcv.is_list_of(replace_ratio, float)
+            assert 0 <= sum(replace_ratio) <= 1
+        elif isinstance(replace_ratio, float):
+            assert 0 <= replace_ratio <= 1
+        elif replace_ratio is None:
+            pass
+        else:
+            raise ValueError('replace_ratios must be None, float, '
+                             'or list of float')
+        self.replace_ratio = replace_ratio
+
+        valid_directions = ['horizontal', 'vertical', 'diagonal']
+        if isinstance(direction, str):
+            assert direction in valid_directions
+        elif isinstance(direction, list):
+            assert mmcv.is_list_of(direction, str)
+            assert set(direction).issubset(set(valid_directions))
+        else:
+            raise ValueError('direction must be either str or list of str')
+        self.direction = direction
+
+        if isinstance(replace_ratio, list):
+            assert len(self.replace_ratio) == len(self.direction)
+
+    def bbox_replace(self, bboxes, img_shape, direction):
+        """replace bboxes horizontally.
+
+        Args:
+            bboxes (numpy.ndarray): Bounding boxes, shape (..., 4*k)
+            img_shape (tuple[int]): Image shape (height, width)
+            direction (str): replace direction. Options are 'horizontal',
+                'vertical'.
+
+        Returns:
+            numpy.ndarray: Replaced bounding boxes.
+        """
+
+        assert bboxes.shape[-1] % 4 == 0
+        replaced = bboxes.copy()
+        if direction == 'horizontal':
+            w = img_shape[1]
+            replaced[..., 0::4] = w - bboxes[..., 2::4]
+            replaced[..., 2::4] = w - bboxes[..., 0::4]
+        elif direction == 'vertical':
+            h = img_shape[0]
+            replaced[..., 1::4] = h - bboxes[..., 3::4]
+            replaced[..., 3::4] = h - bboxes[..., 1::4]
+        elif direction == 'diagonal':
+            w = img_shape[1]
+            h = img_shape[0]
+            replaced[..., 0::4] = w - bboxes[..., 2::4]
+            replaced[..., 1::4] = h - bboxes[..., 3::4]
+            replaced[..., 2::4] = w - bboxes[..., 0::4]
+            replaced[..., 3::4] = h - bboxes[..., 1::4]
+        else:
+            raise ValueError(f"Invalid flipping direction '{direction}'")
+        return replaced
+
+    def __call__(self, results):
+        """Call function to replace bounding boxes.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Flipped results, 'replace', 'replace_direction' keys are added \
+                into result dict.
+        """
+
+        if 'flip' not in results:
+            if isinstance(self.direction, list):
+                # None means non-flip
+                direction_list = self.direction + [None]
+            else:
+                # None means non-flip
+                direction_list = [self.direction, None]
+
+            if isinstance(self.replace_ratio, list):
+                non_replace_ratio = 1 - sum(self.replace_ratio)
+                replace_ratio_list = self.replace_ratio + [non_replace_ratio]
+            else:
+                non_replace_ratio = 1 - self.replace_ratio
+                # exclude non-flip
+                single_ratio = self.replace_ratio / (len(direction_list) - 1)
+                replace_ratio_list = [single_ratio] * (len(direction_list) -
+                                                    1) + [non_replace_ratio]
+
+            cur_dir = np.random.choice(direction_list, p=replace_ratio_list)
+
+            results['replace'] = cur_dir is not None
+        if 'replace_direction' not in results:
+            results['replace_direction'] = cur_dir
+        if results['replace']:
+            # flip bboxes
+            for key in results.get('bbox_fields', []):
+                results[key] = self.bbox_flip(results[key],
+                                              results['img_shape'],
+                                              results['flip_direction'])
+            # flip image
+            for key in results.get('img_fields', ['img']):
+                results[key] = mmcv.imflip(
+                    results[key], direction=results['flip_direction'])
+
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + f'(replace_ratio={self.replace_ratio})'
+
+
+@PIPELINES.register_module()
 class RandomFlip:
     """Flip the image & bbox & mask.
 

@@ -20,7 +20,7 @@ def multiclass_nms(multi_bboxes,
             contains scores of the background class, but this will be ignored.
         score_thr (float): bbox threshold, bboxes with scores lower than it
             will not be considered.
-        nms_cfg (dict): a dict that contains the arguments of nms operations
+        nms_thr (float): NMS IoU threshold
         max_num (int, optional): if there are more than max_num bboxes after
             NMS, only top max_num will be kept. Default to -1.
         score_factors (Tensor, optional): The factors multiplied to scores
@@ -82,7 +82,29 @@ def multiclass_nms(multi_bboxes,
             return dets, labels, inds
         else:
             return dets, labels
-
+        
+ #########################自己定义的nms 操作， 一个是类别忽略，另一个是类别统一########################### 
+    nms_type = nms_cfg['type']
+    nms_cfg_=nms_cfg.copy()
+    nms_cfg_['type'] = 'nms'
+    if nms_type == 'my_nms':
+        dets, keep = batched_nms(bboxes, scores, labels,nms_cfg_, True)
+        if max_num > 0:
+            dets = dets[:max_num]
+            keep = keep[:max_num]
+        class_id = labels[keep[0]]
+        label=labels[keep]
+        for i in range(keep.shape[0]):
+            label[i]= class_id
+    
+        if return_inds:
+            return dets, label, inds[keep]
+        else:
+            return dets, label
+         
+         
+        
+##############################################################################################################
     dets, keep = batched_nms(bboxes, scores, labels, nms_cfg)
 
     if max_num > 0:
